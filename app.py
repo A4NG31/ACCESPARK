@@ -243,18 +243,29 @@ def leer_archivo(archivo):
     try:
         nombre = archivo.name.lower()
         if nombre.endswith('.csv'):
-            # Intentar con diferentes encodings
-            try:
-                df = pd.read_csv(archivo, encoding='utf-8', delimiter=',')
-            except:
-                archivo.seek(0)
-                try:
-                    df = pd.read_csv(archivo, encoding='latin-1', delimiter=',')
-                except:
-                    archivo.seek(0)
-                    df = pd.read_csv(archivo, encoding='iso-8859-1', delimiter=',')
+            # Leer el contenido como bytes primero
+            contenido = archivo.read()
+            archivo.seek(0)
             
-            # Limpiar nombres de columnas (eliminar espacios y caracteres especiales)
+            # Intentar con diferentes encodings
+            encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'utf-8-sig']
+            df = None
+            
+            for encoding in encodings:
+                try:
+                    from io import StringIO
+                    texto = contenido.decode(encoding)
+                    df = pd.read_csv(StringIO(texto), sep=',', engine='python')
+                    break
+                except:
+                    continue
+            
+            if df is None:
+                # Último intento con detección automática
+                archivo.seek(0)
+                df = pd.read_csv(archivo, sep=None, engine='python')
+            
+            # Limpiar nombres de columnas
             df.columns = df.columns.str.strip()
             return df
         else:
@@ -263,6 +274,8 @@ def leer_archivo(archivo):
             return df
     except Exception as e:
         st.error(f"Error al leer el archivo {archivo.name}: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 def procesar_archivos_accesspark(archivos_accesspark, archivo_gopass):
@@ -287,13 +300,21 @@ def procesar_archivos_accesspark(archivos_accesspark, archivo_gopass):
         return None, None
     
     # Verificar columnas necesarias en ACCESSPARK
+    columnas_accesspark = df_accesspark.columns.tolist()
+    st.info(f"📋 Columnas encontradas en ACCESSPARK: {columnas_accesspark}")
+    
     if 'check_in' not in df_accesspark.columns or 'plate_in' not in df_accesspark.columns:
-        st.error("El archivo de ACCESSPARK debe contener las columnas 'check_in' y 'plate_in'")
+        st.error(f"❌ El archivo de ACCESSPARK debe contener las columnas 'check_in' y 'plate_in'")
+        st.error(f"Columnas actuales: {', '.join(columnas_accesspark)}")
         return None, None
     
     # Verificar columnas necesarias en GOPASS
+    columnas_gopass = df_gopass.columns.tolist()
+    st.info(f"📋 Columnas encontradas en GOPASS: {columnas_gopass}")
+    
     if 'Fecha de entrada' not in df_gopass.columns or 'Placa Vehiculo' not in df_gopass.columns:
-        st.error("El archivo de GOPASS debe contener las columnas 'Fecha de entrada' y 'Placa Vehiculo'")
+        st.error(f"❌ El archivo de GOPASS debe contener las columnas 'Fecha de entrada' y 'Placa Vehiculo'")
+        st.error(f"Columnas actuales: {', '.join(columnas_gopass)}")
         return None, None
     
     # Procesar ACCESSPARK
