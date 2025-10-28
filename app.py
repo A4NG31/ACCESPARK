@@ -243,9 +243,24 @@ def leer_archivo(archivo):
     try:
         nombre = archivo.name.lower()
         if nombre.endswith('.csv'):
-            return pd.read_csv(archivo, encoding='utf-8', delimiter=',')
+            # Intentar con diferentes encodings
+            try:
+                df = pd.read_csv(archivo, encoding='utf-8', delimiter=',')
+            except:
+                archivo.seek(0)
+                try:
+                    df = pd.read_csv(archivo, encoding='latin-1', delimiter=',')
+                except:
+                    archivo.seek(0)
+                    df = pd.read_csv(archivo, encoding='iso-8859-1', delimiter=',')
+            
+            # Limpiar nombres de columnas (eliminar espacios y caracteres especiales)
+            df.columns = df.columns.str.strip()
+            return df
         else:
-            return pd.read_excel(archivo)
+            df = pd.read_excel(archivo)
+            df.columns = df.columns.str.strip()
+            return df
     except Exception as e:
         st.error(f"Error al leer el archivo {archivo.name}: {str(e)}")
         return None
