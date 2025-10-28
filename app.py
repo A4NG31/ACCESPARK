@@ -163,7 +163,7 @@ def procesar_fecha_hora_accesspark(fecha_hora_str):
     """
     Procesa la columna check_in de ACCESSPARK
     Input: '2025-02-27 14:23:00.000'
-    Output: fecha='2025-02-27', hora='14:23'
+    Output: fecha='27/02/2025', hora='14:23'
     """
     try:
         if pd.isna(fecha_hora_str):
@@ -174,7 +174,8 @@ def procesar_fecha_hora_accesspark(fecha_hora_str):
         if pd.isna(dt):
             return None, None
         
-        fecha = dt.strftime('%Y-%m-%d')
+        # NORMALIZAR al formato DD/MM/YYYY para que coincida con GOPASS
+        fecha = dt.strftime('%d/%m/%Y')
         hora = dt.strftime('%H:%M')
         
         return fecha, hora
