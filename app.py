@@ -238,6 +238,34 @@ def crear_llave(placa, fecha, hora):
     
     return f"{placa_limpia}|{fecha_limpia}|{hora_limpia}"
 
+def generar_llaves_con_tolerancia(placa, fecha, hora, minutos_tolerancia=10):
+    """
+    Genera múltiples llaves con tolerancia de tiempo
+    Retorna una lista de llaves: [llave_exacta, llave_-10min, llave_-9min, ..., llave_+9min, llave_+10min]
+    """
+    if pd.isna(placa) or pd.isna(fecha) or pd.isna(hora):
+        return []
+    
+    try:
+        # Convertir hora a datetime para hacer operaciones
+        hora_base = datetime.strptime(hora, '%H:%M')
+        llaves = []
+        
+        # Generar llaves con tolerancia de -10 a +10 minutos
+        for offset in range(-minutos_tolerancia, minutos_tolerancia + 1):
+            from datetime import timedelta
+            nueva_hora = hora_base + timedelta(minutes=offset)
+            hora_str = nueva_hora.strftime('%H:%M')
+            llave = crear_llave(placa, fecha, hora_str)
+            if llave:
+                llaves.append(llave)
+        
+        return llaves
+    except:
+        # Si hay error, retornar solo la llave exacta
+        llave = crear_llave(placa, fecha, hora)
+        return [llave] if llave else []
+
 def leer_archivo(archivo):
     """Lee un archivo Excel o CSV"""
     try:
@@ -247,18 +275,28 @@ def leer_archivo(archivo):
             contenido = archivo.read()
             archivo.seek(0)
             
-            # Intentar con diferentes encodings
+            # Intentar con diferentes encodings y separadores
             encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'utf-8-sig']
+            separadores = [',', ';', '\t', '|']
             df = None
             
             for encoding in encodings:
-                try:
-                    from io import StringIO
-                    texto = contenido.decode(encoding)
-                    df = pd.read_csv(StringIO(texto), sep=',', engine='python')
+                for sep in separadores:
+                    try:
+                        from io import StringIO
+                        texto = contenido.decode(encoding)
+                        df_temp = pd.read_csv(StringIO(texto), sep=sep, engine='python')
+                        
+                        # Verificar si la lectura fue exitosa (más de 1 columna)
+                        if len(df_temp.columns) > 1:
+                            df = df_temp
+                            st.success(f"✅ Archivo CSV leído correctamente con separador '{sep}' y encoding '{encoding}'")
+                            break
+                    except:
+                        continue
+                
+                if df is not None:
                     break
-                except:
-                    continue
             
             if df is None:
                 # Último intento con detección automática
@@ -322,8 +360,13 @@ def procesar_archivos_accesspark(archivos_accesspark, archivo_gopass):
     df_accesspark[['fecha_entrada', 'hora_entrada']] = df_accesspark['check_in'].apply(
         lambda x: pd.Series(procesar_fecha_hora_accesspark(x))
     )
-    df_accesspark['llave'] = df_accesspark.apply(
+    df_accesspark['llave_exacta'] = df_accesspark.apply(
         lambda row: crear_llave(row['plate_in'], row['fecha_entrada'], row['hora_entrada']), 
+        axis=1
+    )
+    # Generar llaves con tolerancia
+    df_accesspark['llaves_tolerancia'] = df_accesspark.apply(
+        lambda row: generar_llaves_con_tolerancia(row['plate_in'], row['fecha_entrada'], row['hora_entrada'], 10),
         axis=1
     )
     
@@ -332,26 +375,52 @@ def procesar_archivos_accesspark(archivos_accesspark, archivo_gopass):
     df_gopass[['fecha_entrada', 'hora_entrada']] = df_gopass['Fecha de entrada'].apply(
         lambda x: pd.Series(procesar_fecha_hora_gopass(x))
     )
-    df_gopass['llave'] = df_gopass.apply(
+    df_gopass['llave_exacta'] = df_gopass.apply(
         lambda row: crear_llave(row['Placa Vehiculo'], row['fecha_entrada'], row['hora_entrada']), 
         axis=1
     )
-    
-    # Crear conjuntos de llaves para búsqueda rápida
-    llaves_accesspark = set(df_accesspark['llave'].dropna())
-    llaves_gopass = set(df_gopass['llave'].dropna())
-    
-    # Agregar columna de coincidencias en ACCESSPARK
-    df_accesspark['Estado_Validacion'] = df_accesspark['llave'].apply(
-        lambda x: 'Llave encontrada en GOPASS' if x in llaves_gopass else 'Llave NO encontrada en GOPASS'
+    # Generar llaves con tolerancia
+    df_gopass['llaves_tolerancia'] = df_gopass.apply(
+        lambda row: generar_llaves_con_tolerancia(row['Placa Vehiculo'], row['fecha_entrada'], row['hora_entrada'], 10),
+        axis=1
     )
     
-    # Agregar columna de coincidencias en GOPASS
-    df_gopass['Estado_Validacion'] = df_gopass['llave'].apply(
-        lambda x: 'Llave encontrada en ACCESSPARK' if x in llaves_accesspark else 'Llave NO encontrada en ACCESSPARK'
-    )
+    # Crear conjuntos de llaves para búsqueda rápida (con tolerancia)
+    llaves_accesspark = set()
+    for llaves_list in df_accesspark['llaves_tolerancia'].dropna():
+        llaves_accesspark.update(llaves_list)
     
-    return df_accesspark, df_gopass
+    llaves_gopass = set()
+    for llaves_list in df_gopass['llaves_tolerancia'].dropna():
+        llaves_gopass.update(llaves_list)
+    
+    # Agregar columna de coincidencias en ACCESSPARK (verificar si alguna llave con tolerancia coincide)
+    def verificar_coincidencia_accesspark(llaves_list):
+        if not llaves_list:
+            return 'Llave NO encontrada en GOPASS'
+        for llave in llaves_list:
+            if llave in llaves_gopass:
+                return 'Llave encontrada en GOPASS'
+        return 'Llave NO encontrada en GOPASS'
+    
+    df_accesspark['Estado_Validacion'] = df_accesspark['llaves_tolerancia'].apply(verificar_coincidencia_accesspark)
+    
+    # Agregar columna de coincidencias en GOPASS (verificar si alguna llave con tolerancia coincide)
+    def verificar_coincidencia_gopass(llaves_list):
+        if not llaves_list:
+            return 'Llave NO encontrada en ACCESSPARK'
+        for llave in llaves_list:
+            if llave in llaves_accesspark:
+                return 'Llave encontrada en ACCESSPARK'
+        return 'Llave NO encontrada en ACCESSPARK'
+    
+    df_gopass['Estado_Validacion'] = df_gopass['llaves_tolerancia'].apply(verificar_coincidencia_gopass)
+    
+    # Eliminar columnas temporales de llaves con tolerancia antes de exportar
+    df_accesspark_export = df_accesspark.drop(columns=['llaves_tolerancia'])
+    df_gopass_export = df_gopass.drop(columns=['llaves_tolerancia'])
+    
+    return df_accesspark_export, df_gopass_export
 
 def crear_excel_resultado(df_accesspark, df_gopass):
     """Crea el archivo Excel con las dos hojas procesadas"""
@@ -437,10 +506,12 @@ def main():
         st.write("**ACCESSPARK:**")
         st.write("- Columnas: check_in, plate_in")
         st.write("- Formato fecha: YYYY-MM-DD HH:MM:SS")
+        st.write("- Tolerancia: ±10 minutos")
         
         st.write("**GOPASS:**")
         st.write("- Columnas: Fecha de entrada, Placa Vehiculo")
         st.write("- Formato fecha: DD/MM/YYYY HH:MM:SS")
+        st.write("- Tolerancia: ±10 minutos")
 
     # Sección de carga de archivos
     st.markdown('<div class="sub-header">📤 Carga de Archivos</div>', unsafe_allow_html=True)
