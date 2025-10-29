@@ -155,6 +155,17 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+
+# Logo de GoPass con contenedor estilizado
+st.markdown("""
+<div class="logo-container">
+    <img src="https://i.imgur.com/z9xt46F.jpeg"
+         style="width: 60%; border-radius: 10px; display: block; margin: 0 auto;" 
+         alt="Logo Gopass">
+</div>
+""", unsafe_allow_html=True)
+
+
 # ========================================
 # FUNCIONES DE PROCESAMIENTO
 # ========================================
